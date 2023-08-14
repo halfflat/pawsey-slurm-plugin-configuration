@@ -1,4 +1,70 @@
-function slurm_cli_setup_defaults(options, cli_type)
+-- Utility and helper functions used in filter methods.
+
+-- Regard str as a string of tokens separated by separators that are described by the pattern string and
+-- return the tokens as a table.
+-- If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
+-- If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
+-- the preceding token would be non-empty.
+
+function tokenize(str, pattern, max_tokens)
+    if #str == 0 then return {} end
+
+    pattern = pattern or '%s'
+    max_tokens = max_tokens or 0
+
+    local tokens = {}
+    local tok_from = 1
+    while tok_from <= #str do
+        if max_tokens == 1 then
+            table.insert(tokens, str:sub(tok_from))
+            break
+        end
+        max_tokens = max_tokens - 1
+
+        local sep_from, sep_to = str:find(pattern, tok_from)
+
+        -- Exclude zero-length tokens when the pattern gives a zero-length match.
+        if sep_from == tok_from and sep_to < sep_from then
+            sep_from, sep_to = str:find(pattern, tok_from + 1)
+        end
+
+        sep_from = sep_from or #str + 1
+        sep_to = sep_to or #str + 1
+
+        table.insert(tokens, str:sub(tok_from, sep_from - 1))
+        tok_from = sep_to + 1
+    end
+    return tokens
+end
+
+-- Report message to stderr with final newline and return slurm.FAILURE, so that
+--     return slurm_failure("error")
+-- is equivalent to
+--     io.stderr:write("error\n")
+--     return slurm.FAILURE
+function slurm_failure(error_msg)
+    io.stderr:write(error_msg, '\n')
+    return slurm.FAILURE
+end
+
+-- Execute command; return captured stdout and return code.
+function osExecute(cmd)
+    local fileHandle     = assert(io.popen(cmd, 'r'))
+    local commandOutput  = assert(fileHandle:read('*a'))
+    local rc = {fileHandle:close()}
+    return commandOutput, rc[3]            -- rc[3] contains return code
+end
+
+function parse_partition_info(partition)
+    if not partition then return nil end
+
+
+
+end
+
+-- Slurm CLI filter interface functions:
+
+function slurm_cli_setup_defaults(options, early)
     --[[
         Rather than just have a default SLURM_HINT in the
         module, which is hard to override, this sets the
@@ -10,13 +76,13 @@ function slurm_cli_setup_defaults(options, cli_type)
     return slurm.SUCCESS
 end
 
-function slurm_cli_post_submit(options, cli_type)
+function slurm_cli_post_submit(offset, jobid, stepid)
     -- Currently a no-op
 
     return slurm.SUCCESS
 end
 
-function slurm_cli_pre_submit(options, cli_type)
+function slurm_cli_pre_submit(options, offset)
     --[[
         Sets the memory request if not provided
         Relies on output from scontrol so large formating
@@ -29,30 +95,29 @@ function slurm_cli_pre_submit(options, cli_type)
         is all the memory on a node.
     --]]
 
+    -- Set to true to enable debug output
+    local enable_debug = false
 
-    local function osExecute(cmd)
-        local fileHandle     = assert(io.popen(cmd, 'r'))
-        local commandOutput  = assert(fileHandle:read('*a'))
-        local returnTable    = {fileHandle:close()}
-        return commandOutput -- ,returnTable[3]            -- rc[3] contains returnCode
-    end
-
-    local function splitstr (inputstr, sep)
-        if sep == nil then
-            sep = "%s"
+    if enable_debug then
+        -- Potentially write to stderr or log to slurm log instead?
+        local function debug(message, ...)
+            io.stdout:write(message)
+            for _, a in ipairs({...}) do io.stdout:write('\t',a) end
+            io.stdout:write('\n')
         end
-        local t={}
-        for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
-            table.insert(t, str)
+        local function debugf(fmt, ...)
+            io.stdout:write(fmt:format(...), '\n')
         end
-        return t
+        debug('Running cli filter verbosely')
+    else
+        local function debug(...) end
+        local function debugf(...) end
     end
 
-    -- to run with some verbosity for testing.
-    local verbose = false
-    if (verbose) then
-        print('Running cli filter verbosely')
+    local function is_gpu_partition(partition)
+        return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
     end
+
     -- get the arguments
     local threads = tonumber(options['threads-per-core'])
     local mem = options['mem']
@@ -60,40 +125,34 @@ function slurm_cli_pre_submit(options, cli_type)
     local partition = options['partition']
     local exclusive = options['exclusive']
 
-    -- to check if any mpi resource parameters have been passed
-    -- -2 is the default value for resource requests
-    local mpilist = {
-        tonumber(options['ntasks'])>1,
-        tonumber(options['ntasks-per-node'])~=-2,
-        tonumber(options['ntasks-per-socket'])~=-2
-    }
-
     -- to check if any cpu resource parameters have been passed
-    local cpulist = {
-        tonumber(options['cpus-per-task']) > 1,
-        tonumber(options['cores-per-socket']) ~=-2,
-        tonumber(options['cpus-per-gpu'])>0,
-    }
+    local has_explicit_cpu_request = (
+        tonumber(options['cpus-per-task']) > 1 or
+        tonumber(options['cpus-per-gpu)']) > 0 or
+        tonumber(options['cores-per-socket']) ~=-2 or
+    )
 
     -- to check if any mem resource parameters have been passed
-    local memlist = {
-        options['mem-per-cpu'] ~= nil,
-        options['mem-per-gpu'] ~= nil,
-        options['mem'] ~=nil,
-    }
+    local has_all_mem_request = options['mem']
+    local has_explicit_mem_request = (
+        options['mem-per-cpu'] ~= nil or
+        options['mem-per-gpu'] ~= nil or
+        options['mem'] ~=nil and not has_all_mem_request
+    )
+
     local memforallmem = "0?" -- value that indicates --mem=0 has been passed.
 
-    if (verbose) then
-        print("Before doing any changes values are (mem, mempercore, partition, exclusive?) ", mem, mempercore, partition, exclusive)
-    end
+    debug("Before doing any changes values are (mem, mempercore, partition, exclusive?) ", mem, mempercore, partition, exclusive)
 
-    -- first check partition and if nil, then default to work. Ideally it would be good to replace
+    -- First check partition and if nil, then default to work. Ideally it would be good to replace
     if (partition == nil) then
         -- find partition that returns default
         local pcmd = "scontrol show partition --oneliner | grep Default=YES | sed 's:=: :g' | awk '{print $2}' "
         defpart = (osExecute(pcmd)):gsub("[\n\r]","")
         partition = defpart
     end
+
+    -- Early exit if there is an explicit, no
 
     -- if not the gpu cluster then so long as memory is passed can determine
     -- how to proceed
@@ -219,7 +278,6 @@ function slurm_cli_pre_submit(options, cli_type)
                 if (options['ntasks-per-node'] ~= "-2") then
                     local gpuspernodedesired = math.ceil(tonumber(options['gpus-per-task'])*tonumber(options['ntasks-per-node']))
                     -- options['gres'] = 'gres:gpu:' .. gpuspernodedesired
-                    mpilist = {}
                     if (verbose) then
                         print('Request of gpus per task and tasks-per-node request', options['gres'], options['gpus-per-task'])
                                         end
@@ -237,7 +295,6 @@ function slurm_cli_pre_submit(options, cli_type)
                     igpuset = true
                     -- print("ERROR: Requested gpus-per-task but did not set ntasks-per-node. \nPlease resubmit with appropriate request")
                     -- return slurm.FAILURE
-                    mpilist = {}
                 end
             end
         end
@@ -254,29 +311,10 @@ function slurm_cli_pre_submit(options, cli_type)
         options['cpus-per-gpu'] = math.floor(cpuspergpu)
         -- check if any mem related requests have been passed and reject
         -- if passed using sbatch or salloc
-        local imemflag = false
-        for k,v in pairs(memlist) do
-            if (v) then
-                imemflag = true
-            end
-        end
-        if (imemflag) then
-            -- print("ERROR: Explicitly requesting Memory resources. \nPlease resubmit with just GPU request. 1 GPU = ", mempergpu, "MB of memory (with SMT turned off).")
+        if (has_explicit_mem_request) then
             print("ERROR: Explicitly requesting Memory resources. \nPlease resubmit with just GPU request. 1 GPU = ", mempergpu, "of total node memory.")
             return slurm.FAILURE
         end
-        -- check if any mpi related requests have been passed and reject
-        -- if passed using sbatch or salloc
-        local impiflag = false
-        for k,v in pairs(mpilist) do
-            if (v) then
-                impiflag = true
-            end
-        end
-        -- if (impiflag) then
-        --     print("ERROR: Explicitly requesting MPI resources without appropriate associated gpu request. \nPlease resubmit with just GPU request. 1 GPU = ", cpuspergpu, "CPUS (with SMT turned off).")
-        --     return slurm.FAILURE
-        -- end
         -- check if any cpu related requests have been passed and reject
         -- if passed using sbatch or salloc
         local icpuflag = false
@@ -294,29 +332,10 @@ function slurm_cli_pre_submit(options, cli_type)
         -- otherwise set cpus and memory to the appropriate amount
         if (exclusive == "exclusive") then
             options['gres'] = 'gpu:8'
-
-            -- leaving this untouched but here for reference. See comment related to
-            -- mem below.
-            -- options['mem'] = math.floor(memperhardwarethread*numhardwarethread)
-            -- options['mem-per-gpu'] = mempergpu
-            -- options['mem-per-cpu'] = mempercoredesired
-        else
-            -- local numgpus = tonumber(splitstr(options["gres"],"gres:gpu:")[1])
-            -- set the mem to fraction of the gpus requested
-            -- note that for non-gpu nodes we set the mem-per-cpu because of the use of DefMemPerCPU
-            -- currently this generates a bug because the total amount of memory requested is
-            -- incorrectly calculated.
-            -- The ideal way would be to set the mem field to the appropriate amount
-            -- A current solution is to configure GPU nodes to define DefMemPerGPU as a JobDefault
-            -- and not set anything to do with the memory here.
-            -- Below leaving the settings for reference.
-            -- options['mem'] = math.floor(mempercoredesired * cpuspergpu * numgpus)
-            -- options['mem-per-gpu'] = mempergpu
-            -- options['mem-per-cpu'] = mempercoredesired
         end
-        if (verbose) then
-            print("Now submitting a job for (exclusive flag, gpu, ntasks-per-node, mem, mem-per-cpu,mem-per-gpu)", exclusive, options['gres'], options['ntasks-per-node'], options['mem'], options['mem-per-cpu'], options['mem-per-gpu'])
-        end
+        --if (verbose) then
+        --    print("Now submitting a job for (exclusive flag, gpu, ntasks-per-node, mem, mem-per-cpu,mem-per-gpu)", exclusive, options['gres'], options['ntasks-per-node'], options['mem'], options['mem-per-cpu'], options['mem-per-gpu'])
+        --end
         return slurm.SUCCESS
     end
 
