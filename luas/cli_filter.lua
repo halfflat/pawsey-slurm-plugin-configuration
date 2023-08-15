@@ -59,7 +59,7 @@ local function slurm_error(_msg)
 end
 
 local function slurm_errorf(fmt, ...)
-    return error("cli_filter: "..fmt, ...)
+    return slurm_error("cli_filter: "..fmt, ...)
 end
 
 local function slurm_debug(msg)
