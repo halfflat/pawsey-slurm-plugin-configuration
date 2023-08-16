@@ -16,21 +16,29 @@
 
 -- Utility and helper functions used in filter methods.
 
--- Regard str as a string of tokens separated by separators that are described by the pattern string and
--- return the tokens as a table.
--- If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
--- If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
--- the preceding token would be non-empty.
+--[[
+   tokenize(str, pattern, max_tokens)
+
+   Regard str as a string of tokens separated by separators that are described by the pattern string and
+   return the tokens as a table. Operates similarly to perl's split function.
+
+  If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
+  If max_tokens is zero, exclude any trailing empty tokens from the result.
+  If max_tokens is a negative number, return all tokens.
+  If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
+  the preceding token would be non-empty.
+]]--
 
 local function tokenize(str, pattern, max_tokens)
     if #str == 0 then return {} end
 
     pattern = pattern or '%s'
     max_tokens = max_tokens or 0
+    local truncate_trailing_empty = max_tokens == 0
 
     local tokens = {}
     local tok_from = 1
-    while tok_from <= #str do
+    repeat
         if max_tokens == 1 then
             table.insert(tokens, str:sub(tok_from))
             break
@@ -44,11 +52,12 @@ local function tokenize(str, pattern, max_tokens)
             sep_from, sep_to = str:find(pattern, tok_from + 1)
         end
 
-        sep_from = sep_from or #str + 1
-        sep_to = sep_to or #str + 1
+        table.insert(tokens, str:sub(tok_from, (sep_from or 1 + #str) - 1))
+        tok_from = (sep_to or #str) + 1
+    until not sep_from
 
-        table.insert(tokens, str:sub(tok_from, sep_from - 1))
-        tok_from = sep_to + 1
+    if truncate_trailing_empty then
+        while #tokens>0 and tokens[#tokens] == '' do tokens[#tokens] = nil end
     end
     return tokens
 end
