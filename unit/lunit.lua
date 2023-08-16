@@ -112,8 +112,6 @@ local function run_tests_through(reporter, suite, matching, excluding)
     -- key that matches the string parameter matching (if not nil) and which
     -- don't match the string parameter excluding (if not nil) are invoked.
 
-    local base_env = is_callable(suite) and suite() or _ENV
-
     for name, fn in pairs(suite) do
         if  type(fn) == 'function' and
             (not matching or string.find(name, matching)) and

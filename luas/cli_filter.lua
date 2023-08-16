@@ -114,7 +114,7 @@ local function parse_partition_info_str(pinfo_str)
 
         -- some fields themselves are expected to contain tables
         if k == 'JobDefaults' or k == 'TRES' or k == 'TRESBillingWeights' then
-            rhs = {}
+            local rhs = {}
             if v ~= '(null)' then
                 for _, subfield in ipairs(tokenize(v, ',')) do
                     local k, v = table.unpack(tokenize(subfield, '=', 2))
@@ -213,7 +213,7 @@ function slurm_cli_pre_submit(options, offset)
 
         local mem_per_hw_thread = math.floor(tonumber(pinfo.DefMemPerCPU))
 
-        if is_node_exlcusive or has_all_mem_request then
+        if is_node_exclusive or has_all_mem_request then
             local hw_threads_per_node = math.floor(tonumber(pinfo.TotalCPUs)/tonumber(pinfo.TotalNodes))
             options['mem'] = math.floor(mem_per_hw_thread * hw_threads_per_node)
         else
@@ -240,7 +240,7 @@ function slurm_cli_pre_submit(options, offset)
         -- Try to get mem-per-gpu from JobDefaults? Only used for informational purposes.
         local def_mem_per_gpu = pinfo.JobDefaults and pinfo.JobDefaults.DefMemPerGPU
         if has_explicit_mem_request then
-            return slurm_errorf('cannont explicitly request memory for GPU allocation; each allocated GPU allocates %s MB of memory', def_memper_gpu or "some")
+            return slurm_errorf('cannot explicitly request memory for GPU allocation; each allocated GPU allocates %s MB of memory', def_mem_per_gpu or "some")
         end
 
         -- Ensure there is some gpu request on a gpu partition
