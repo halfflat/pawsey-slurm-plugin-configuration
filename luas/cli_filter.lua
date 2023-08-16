@@ -14,8 +14,6 @@
     corresponding to slurm's LOG_LEVEL_ERROR, which writes to stderr by default.
 --]]
 
--- Utility and helper functions used in filter methods.
-
 --[[
    tokenize(str, pattern, max_tokens)
 
@@ -62,13 +60,16 @@ local function tokenize(str, pattern, max_tokens)
     return tokens
 end
 
-local function slurm_error(_msg)
+-- Wrappers for slurm logging
+
+local function slurm_error(msg)
     slurm.log_error("cli_filter: %s", msg)
     return slurm.ERROR
 end
 
 local function slurm_errorf(fmt, ...)
-    return slurm_error("cli_filter: "..fmt, ...)
+    slurm.log_error("cli_filter: "..fmt, ...)
+    return slurm.ERROR
 end
 
 local function slurm_debug(msg)
@@ -80,6 +81,7 @@ local function slurm_debugf(fmt, ...)
 end
 
 -- Execute command; return captured stdout and return code.
+
 local function os_execute(cmd)
     local fileHandle     = assert(io.popen(cmd, 'r'))
     local commandOutput  = assert(fileHandle:read('*a'))
@@ -87,24 +89,56 @@ local function os_execute(cmd)
     return commandOutput, rc[3]            -- rc[3] contains return code
 end
 
+-- Run scontrol show partition; this function will be mocked in unit testing.
+
+local function run_show_partition(partition)
+    return os_execute('scontrol show partition --oneliner '..(partition or '')..' 2>/dev/null')
+end
+
 local function get_default_partition()
-    local all_pinfo, rc = os_execute('scontrol show partition --oneliner 2>/dev/null')
-    if not rc then
-        for _, line in ipairs(tokenize(all_pinfo, '\n')) do
+    local all_pinfo_str, rc = run_show_partition()
+    if rc == 0 then
+        for _, line in ipairs(tokenize(all_pinfo_str, '\n')) do
             if line:find("Default=YES") then return line:match('PartitionName=([^%s]+)') end
         end
+    end
     return nil
 end
 
-function parse_partition_info_str(pinfo_str)
+local function parse_partition_info_str(pinfo_str)
     if not pinfo_str then return nil end
 
-    -- ...
+    local pinfo = {}
+    for _, field in ipairs(tokenize(pinfo_str, '%s+')) do
+        local k, v = table.unpack(tokenize(field, '=', 2))
+
+        -- some fields themselves are expected to contain tables
+        if k == 'JobDefaults' or k == 'TRES' or k == 'TRESBillingWeights' then
+            rhs = {}
+            if v ~= '(null)' then
+                for _, subfield in ipairs(tokenize(v, ',')) do
+                    local k, v = table.unpack(tokenize(subfield, '=', 2))
+                    if v == nil then rhs.insert(k)
+                    else rhs[k] = v
+                    end
+                end
+            end
+            pinfo[k] = rhs
+        else
+            pinfo[k] = v
+        end
+    end
+    return pinfo
 end
 
-function get_partition_info(partition)
-    local pinfo, rc = os_execute('scontrol show partition --oneliner '..partition..' 2>/dev/null')
-    if rc then return nil else return parse_partition_info_str(pinfo_str)
+local function get_partition_info(partition)
+    if not partition or partition == '' then return nil end
+    local pinfo_str, rc = run_show_partition(partition)
+
+    if rc == 0 then
+        return parse_partition_info_str(pinfo_str)
+    end
+    return nil
 end
 
 -- Slurm CLI filter interface functions:
@@ -148,89 +182,23 @@ function slurm_cli_pre_submit(options, offset)
     -- An unset option can be repesented by nil, the string "-2", or the string "unset": check all of them.
     local function is_unset(x) return x == nil or x == '-2' or x == 'unset' end
 
-    -- to check if any cpu resource parameters have been passed
-    local has_explicit_cpu_request = (
-        tonumber(options['cpus-per-task']) > 1 or
-        tonumber(options['cpus-per-gpu)']) > 0 or
+    -- have any cpu resource options been passed?
+    local has_explicit_cpu_request =
+        tonumber(options['cpus-per-task']) > 1 or tonumber(options['cpus-per-gpu)']) > 0 or
         not is_unset(options['cores-per-socket'])
-    )
 
-    -- to check if any gpu resrouce parameters have been passed
-    local has_explicit_gpu_request = (
-        not is_unset(options['gres']) or
-        not is_unset(options['gpus']) or
-        not is_unset(options['gpus-per-node']) or
-        not is_unset(options['gpus-per-task'])
-    )
+    -- have any gpu resrouce options been passed?
+    local has_explicit_gpu_request =
+        not is_unset(options['gres']) or not is_unset(options['gpus']) or
+        not is_unset(options['gpus-per-node']) or not is_unset(options['gpus-per-task'])
 
-    -- to check if any mem resource parameters have been passed, excluding a request for all memorya
+    -- have any mem resource options been passed, excluding a request for all node memory?
     local has_all_mem_request = options['mem'] == "0?"
-    local has_explicit_mem_request = (
-        options['mem-per-cpu'] ~= nil or
-        options['mem-per-gpu'] ~= nil or
-        options['mem'] ~=nil and not has_all_mem_request
-    )
+    local has_explicit_mem_request =
+        options['mem-per-cpu'] ~= nil or options['mem-per-gpu'] ~= nil or options['mem'] ~=nil and not has_all_mem_request
 
     local is_node_exclusive = options['exclusive'] == 'exclusive' -- disregard 'user', 'mcs' possibilities.
     local partition = options['partition'] or get_default_partition()
-
-    -- if presubmisison has been already run then do nothing ideally we don't need to do these calculations
-    -- but it is unclear how to address this
-
-    -- get the partition information
-    local pinfocmd = "scontrol show partition " .. partition .. " --oneliner"
-    local pinfo = osExecute(pinfocmd):gsub("[\n\r]","")
-    part_dict = {}
-    slurm_debug('extracting parition information...')
-    for j, keyvalue_string in pairs(splitstr(pinfo, ' ')) do
-        if (verbose) then
-            print('Current field and values:', keyvalue_string)
-        end
-        local keyvalue_dict = splitstr(keyvalue_string, '=')
-        local key = nil
-        local value = nil
-        -- some fields contain several entries, process them differently.
-        local tresbillingresult = string.match(keyvalue_dict[1],"TRESBillingWeights")
-        local tresresult = string.match(keyvalue_dict[1],"TRES")
-        local jobdefaultsresult = string.match(keyvalue_dict[1], "JobDefaults")
-        if (tresresult == nil and tresbillingresult == nil and jobdefaultsresult == nil) then
-            key = keyvalue_dict[1]
-            value =  keyvalue_dict[2]
-            part_dict[key] = value
-        else
-            -- clean up the string to get entries
-            if (jobdefaultsresult == nil) then
-                local tresstring
-                if (tresbillingresult ~= nil) then
-                    tresstring = "TRESBillingWeights"
-                else
-                    tresstring = "TRES"
-                end
-                keyvalue_string = keyvalue_string:gsub(tresstring .. "=", '')
-                keyvalue_string = keyvalue_string:gsub('%,', '\n')
-                local oldkeyvalue_dict = splitstr(keyvalue_string, '\n')
-                for k,v in pairs(oldkeyvalue_dict) do
-                    keyvalue_dict = splitstr(v, '=')
-                    key = tresstring .. "_" .. keyvalue_dict[1]
-                    value  = keyvalue_dict[2]
-                    part_dict[key] = value
-                end
-            else
-                -- there are currently problems with trying to robustly extract info in the
-                -- JobDefaults portion of the partition, which can contain stuff like DefMemPerGPU
-                local key_string = "JobDefaults"
-                keyvalue_string = keyvalue_string:gsub(key_string .. "=", '')
-                keyvalue_string = keyvalue_string:gsub('%,', '\n')
-                local oldkeyvalue_dict = splitstr(key_string, '\n')
-                for k,v in pairs(oldkeyvalue_dict) do
-                    keyvalue_dict = splitstr(v, '=')
-                    key = key_string .. "_" .. keyvalue_dict[1]
-                    value  = keyvalue_dict[2]
-                    part_dict[key] = value
-                end
-            end
-        end
-    end
 
     if not is_gpu_partition(partition) then
         -- Non-gpu partition path: compute correct mem-per-cpu value from available memory and threads-per-core option
@@ -243,7 +211,7 @@ function slurm_cli_pre_submit(options, offset)
         local pinfo = get_partition_info(partition)
         if pinfo == nil then return slurm_error("unable to retrieve partition information") end
 
-        local mem_per_hw_thread = math.floor(tonumber(pinfo.DefMemPerCPU]))
+        local mem_per_hw_thread = math.floor(tonumber(pinfo.DefMemPerCPU))
 
         if is_node_exlcusive or has_all_mem_request then
             local hw_threads_per_node = math.floor(tonumber(pinfo.TotalCPUs)/tonumber(pinfo.TotalNodes))
@@ -268,91 +236,34 @@ function slurm_cli_pre_submit(options, offset)
         if has_explicit_cpu_request then
             return slurm_errorf('cannot explicitly request CPU resources for GPU allocation; each allocated GPU allocates %d cores', cpus_per_gpu)
         end
-        options['cpus-per-gpu'] = cpus_per_gpu
 
-        -- try to get mem-per-gpu from JobDefaults?
+        -- Try to get mem-per-gpu from JobDefaults? Only used for informational purposes.
         local def_mem_per_gpu = pinfo.JobDefaults and pinfo.JobDefaults.DefMemPerGPU
         if has_explicit_mem_request then
             return slurm_errorf('cannont explicitly request memory for GPU allocation; each allocated GPU allocates %s MB of memory', def_memper_gpu or "some")
         end
 
-        -- ... TBC
+        -- Ensure there is some gpu request on a gpu partition
+        if not is_node_exclusive and not has_explicit_gpu_request then
+            return slurm_error('')
+        end
 
-
-    -- first trial of gpu, lets complain if there are some
-    if (partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem') then
-        local totalnumgpus = math.floor(tonumber(part_dict["TRES_cpu"])/tonumber(part_dict["TRESBillingWeights_gres/GPU"]))
-        local cpuspergpu = numhardwarethread/totalnumgpus/2
-        local igpuset = false
-        debugf('processing gpu request with %d gpus/node, %d cpus/gpu and options gres=%s, gpus-per-node=%s, gpus-per-task=%s, ntasks-per-node=%s',
-            totalnumgpus, cpuspergpu, options['gres'], options['gpus-per-node'], options['gpus-per-task'], options['ntasks-per-node'])
-
-        if not has_explicit_gpu_request and options['exclusive'] == nil then
-            print("ERROR: No explicit request gpus with gres or gpus-per-node or not exclusive use.\nPlease resubmit with a GPU request.")
-            return slurm.FAILURE
-        end
-        if (options['gres'] == "gres:gpu:0") then
-            print("ERROR: Requesting 0 gpus. \nPlease resubmit with a valid GPU request.")
-            return slurm.FAILURE
-        end
-        -- set the number of cpus per gpu to ensure automatic chiplet allocation and gpu-closest binding.
-        options['cpus-per-gpu'] = math.floor(cpuspergpu)
-        -- check if any mem related requests have been passed and reject
-        -- if passed using sbatch or salloc
-        if (has_explicit_mem_request) then
-            print("ERROR: Explicitly requesting Memory resources. \nPlease resubmit with just GPU request. 1 GPU = ", mempergpu, "of total node memory.")
-            return slurm.FAILURE
-        end
-        -- check if any cpu related requests have been passed and reject
-        -- if passed using sbatch or salloc
-        local icpuflag = false
-        for k,v in pairs(cpulist) do
-            if (v) then
-                icpuflag = true
-            end
-        end
-        if (icpuflag) then
-            print("ERROR: Explicitly requesting CPU resources. \nPlease resubmit with just GPU request. 1 GPU = 8 CPUS (with SMT turned off)")
-            return slurm.FAILURE
-        end
-        -- if exclusive set the memory to all by using 0
-        -- and set the gres=gpu:8
-        -- otherwise set cpus and memory to the appropriate amount
-        if (exclusive == "exclusive") then
+        options['cpus-per-gpu'] = cpus_per_gpu
+        if is_node_exclusive then
             options['gres'] = 'gpu:8'
         end
-        --if (verbose) then
-        --    print("Now submitting a job for (exclusive flag, gpu, ntasks-per-node, mem, mem-per-cpu,mem-per-gpu)", exclusive, options['gres'], options['ntasks-per-node'], options['mem'], options['mem-per-cpu'], options['mem-per-gpu'])
-        --end
         return slurm.SUCCESS
     end
-
-    -- if all the memory has been requested, set the value (in MB)
-    -- if exclusive is requested and no memory set, assume all the memory requested
-    if ( mem == memforallmem or (exclusive == "exclusive" and mem == nil )) then
-        mem = math.floor(memperhardwarethread*numhardwarethread)
-        options['mem'] = mem
-    end
-    -- otherwise set the mem per cpu value to the default
-    if (mem == nil and mempercore == nil and exclusive ~= "exclusive") then
-        mempercore = mempercoredesired
-        options['mem-per-cpu'] = mempercore
-    end
-
-    -- lets add some reporting
-    if (verbose) then
-        print("After doing any changes values are (mem, mempercore, partition, exclusive?) ", mem, mempercore, partition, exclusive)
-        print("And cpu requests are (ntasks, ntasks-per-node)", options["ntasks"], options["ntasks-per-node"])
-    end
-
-    return slurm.SUCCESS
 end
 
-
---[[
-    Testing
-
-    The clif_test table exports utility functions for unit testing. A test environment will need to mock the slurm interfaces:
-        slurm.SUCCESS       Return value on success
-        slurm.ERROR         Return value on 
-
+-- return table of local functions for unit testing
+return {
+    tokenize = tokenize,
+    slurm_error = slurm_error,
+    slurm_errorf = slurm_errorf,
+    slurm_debug = slurm_debug,
+    slurm_debugf = slurm_debugf,
+    get_default_partition = get_default_partition,
+    parse_partition_info_str = parse_partition_info_str,
+    get_partition_info = get_partition_info,
+}
