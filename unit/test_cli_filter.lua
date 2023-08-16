@@ -88,7 +88,6 @@ local function mock_run_show_partition(partition)
         end
     else
         out = mock_show_partition_output_tbl[partition]
---        print('debug partition, out', partition, out)
     end
 
     if out then return out, 0
