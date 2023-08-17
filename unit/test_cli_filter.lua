@@ -96,7 +96,7 @@ local function mock_run_show_partition(partition)
 end
 
 function T.test_get_default_partition()
-    local get_default_partition = lunit.mock_function(clif_functions.get_default_partition, nil, { run_show_partition = mock_run_show_partition })
+    local get_default_partition = lunit.mock_function_upvalues(clif_functions.get_default_partition, { run_show_partition = mock_run_show_partition }, true)
     local eq = lunit.test_eq_v
 
     assert(eq('work', get_default_partition()))
@@ -112,7 +112,7 @@ function T.test_get_default_partition()
 end
 
 function T.test_get_partition_info()
-    local get_partition_info = lunit.mock_function(clif_functions.get_partition_info, nil, { run_show_partition = mock_run_show_partition })
+    local get_partition_info = lunit.mock_function_upvalues(clif_functions.get_partition_info, { run_show_partition = mock_run_show_partition }, true)
     local eq = lunit.test_eq_v
 
     local pinfo_work = get_partition_info('work')

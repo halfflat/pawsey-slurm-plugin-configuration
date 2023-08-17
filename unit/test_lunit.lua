@@ -2,10 +2,9 @@ lunit = require('lunit')
 
 local T = {}
 local test_eq = lunit.test_eq
+local test_eq_v = lunit.test_eq_v
 local run_tests_through = lunit.run_tests_through
 local run_tests = lunit.run_tests
-
-print(run_tests)
 
 function T.test_run_tests_filters()
     local test_set = {}
@@ -133,6 +132,71 @@ function T.test_clone_function()
     set_b('Y')
     assert(test_eq('XY', concat_ab()))
     assert(test_eq('XY', concat_ab_bis()))
+end
+
+function T.test_mock_env()
+    local function load_with_new_env(src)
+        local env = {}
+        setmetatable(env, { __index = _ENV })
+        return load(src, 'chunk', 't', env)
+    end
+
+    local test_src =
+[[
+    global_a = 'a'
+    function p(x) end
+    local function q(x) end
+
+    -- mutually recursive local functions calling global function p
+    -- and local (upvalue) function q.
+    local rec1 = 0
+    local rec2 = 0
+    rec1 = function (n) if n>0 then p(n) q(n) rec2(n-1) end end
+    rec2 = function (n) if n>0 then p(n) q(n) rec1(n-1) end end
+
+    -- local function uses other local function to access global
+    local function get_a() return global_a end
+    local function test_set_a(x)
+        local old_a = get_a()
+        global_a = x
+        return old_a..','.. get_a()
+    end
+
+    return { rec1 = rec1, test_set_a = test_set_a }
+]]
+
+    F = load_with_new_env(test_src)() -- get rec1, test_set_a from chunk
+
+    -- recursive modification for mutually recursive functions:
+
+    capture_pq = ''
+    m_rec1 = lunit.mock_function_env(F.rec1, { p = function (n) capture_pq = capture_pq..(n)..';' end }, true)
+    m_rec1(5)
+    assert(test_eq_v('5;4;3;2;1;', capture_pq))
+
+    capture_pq = ''
+    m_rec1 = lunit.mock_function_upvalues(F.rec1, { q = function (n) capture_pq = capture_pq..(-n)..';'  end }, true)
+    m_rec1(5)
+    assert(test_eq_v('-5;-4;-3;-2;-1;', capture_pq))
+
+    -- non-recursive modification for these functions should affect only first invocation of p, q from rec1
+
+    capture_pq = ''
+    m_rec1 = lunit.mock_function_env(F.rec1, { p = function (n) capture_pq = capture_pq..(n)..';' end }, false)
+    m_rec1(5)
+    assert(test_eq_v('5;', capture_pq))
+
+    capture_pq = ''
+    m_rec1 = lunit.mock_function_upvalues(F.rec1, { q = function (n) capture_pq = capture_pq..(-n)..';'  end }, false)
+    m_rec1(5)
+    assert(test_eq_v('-5;', capture_pq))
+
+    -- confirm upvalues in recursively mocked function share same modified environment
+
+    assert(test_eq_v('a,b', F.test_set_a('b')))
+
+    m_test_set_a = lunit.mock_function_env(F.test_set_a, { global_a ='A' }, true)
+    assert(test_eq_v('A,B', m_test_set_a('B')))
 end
 
 if not lunit.run_tests(T) then os.exit(1) end
