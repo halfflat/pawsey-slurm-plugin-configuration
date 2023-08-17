@@ -245,7 +245,7 @@ function slurm_cli_pre_submit(options, offset)
 
         -- Ensure there is some gpu request on a gpu partition
         if not is_node_exclusive and not has_explicit_gpu_request then
-            return slurm_error('')
+            return slurm_error('non-exclusive GPU allocations require a request for one or more GPUs')
         end
 
         options['cpus-per-gpu'] = cpus_per_gpu
