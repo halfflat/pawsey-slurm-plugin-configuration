@@ -113,7 +113,7 @@ local function run_tests_through(reporter, suite, matching, excluding)
     -- don't match the string parameter excluding (if not nil) are invoked.
 
     for name, fn in pairs(suite) do
-        if  type(fn) == 'function' and
+        if type(fn) == 'function' and
             (not matching or string.find(name, matching)) and
             (not excluding or not string.find(name, excluding))
         then
@@ -176,47 +176,110 @@ end
 
 local function new_context(value) local z = value or {} return function () return z end end
 
-local function mock_function(fn, mocked_globals, mocked_upvalues, _visited)
-    if not _visited then _visited = {}
-    elseif _visited[fn] then return _visited[fn]
-    end
-
-    local g = clone_function(fn)
-    _visited[fn] = g
-
-    local i = 1
-    local i_ENV = nil
-    while true do
-        local up_name, _ = debug.getupvalue(g, i)
-        if not up_name then break end
-
-        if up_name == '_ENV' then i_ENV = i end
-        if mocked_upvalues and mocked_upvalues[up_name] ~= nil then
-            debug.upvaluejoin(g, i, new_context(mocked_upvalues[up_name]), 1)
-        end
-        i = i + 1
-    end
-    if mocked_globals and i_ENV then
-        local _, old_env = debug.getupvalue(g, i_ENV)
-        local new_env = {}
-        setmetatable(new_env, { __index = old_env })
-        for k, v in pairs(mocked_globals) do new_env[k] = v end
-        debug.upvaluejoin(g, i_ENV, new_context(new_env), 1)
-    end
-    if mocked_globals then
-        -- update any function-valued upvalues recursively
-        i = 1
+-- if recurse is truthy, recursively mock functional upvalues of mocked f with modified global environment
+local function mock_function_env(f, mocked_globals, recurse)
+    -- return upvalue index and value of _ENV in function h, or nil if not present
+    local function find_env(h)
+        local i = 1
         while true do
-            local up_name, up_value = debug.getupvalue(g, i)
-            if not up_name then break end
-
-            if type(up_value) == 'function' then
-                debug.upvaluejoin(g, i, new_context(mock_function(up_value, mocked_globals, nil, _visited)), 1)
+            local up_name, up_value = debug.getupvalue(h, i)
+            if not up_name then return nil
+            elseif up_name == '_ENV' then return i, up_value
             end
             i = i + 1
         end
     end
-    return g
+
+    local function make_mocked_env(env)
+        local menv = {}
+        for k, v in pairs(mocked_globals) do menv[k] = v end
+        setmetatable(menv, { __index = env })
+        return menv
+    end
+
+    if not recurse then
+        local g = clone_function(f)
+        local i_ENV, g_ENV = find_env(g)
+        if i_ENV then
+            debug.upvaluejoin(g, i_ENV, new_context(make_mocked_env(g_ENV)), 1)
+        end
+        return g
+    else
+        -- maintain map of modified environments: f and its functional upvalue descendants may
+        -- not have the same _ENV.
+
+        local function recursive_impl(f, menv_map, visited)
+            if visited[f] then return visited[f] end
+            local g = clone_function(f)
+            visited[f] = g
+
+            i_ENV, g_ENV = find_env(g)
+            if i_ENV then
+                local menv = menv_map[g_ENV]
+                if not menv then
+                    menv = make_mocked_env(g_ENV)
+                    menv_map[g_ENV] = menv
+                end
+                debug.upvaluejoin(g, i_ENV, new_context(menv), 1)
+            end
+
+            -- update any function-valued upvalues recursively
+            local i = 1
+            while true do
+                local up_name, up_value = debug.getupvalue(g, i)
+                if not up_name then break end
+
+                if type(up_value) == 'function' then
+                    debug.upvaluejoin(g, i, new_context(recursive_impl(up_value, menv_map, visited)), 1)
+                end
+                i = i + 1
+            end
+            return g
+        end
+
+        return recursive_impl(f, {}, {})
+    end
+end
+
+-- if recurse is truthy, recursively mock functional upvalues of mocked f with new upvalues.
+local function mock_function_upvalues(f, mocked_upvalues, recurse)
+    if not recurse then
+        local g = clone_function(f)
+        local i = 1
+        while true do
+            local up_name, _ = debug.getupvalue(g, i)
+            if not up_name then break end
+
+            if mocked_upvalues and mocked_upvalues[up_name] ~= nil then
+                debug.upvaluejoin(g, i, new_context(mocked_upvalues[up_name]), 1)
+            end
+            i = i + 1
+        end
+        return g
+    else
+        local function recursive_impl(f, visited)
+            if visited[f] then return visited[f] end
+            local g = clone_function(f)
+            visited[f] = g
+
+            -- update any function-valued upvalues recursively
+            local i = 1
+            while true do
+                local up_name, up_value = debug.getupvalue(g, i)
+                if not up_name then break end
+
+                if mocked_upvalues and mocked_upvalues[up_name] ~= nil then
+                    debug.upvaluejoin(g, i, new_context(mocked_upvalues[up_name]), 1)
+                elseif type(up_value) == 'function' then
+                    debug.upvaluejoin(g, i, new_context(recursive_impl(up_value, visited)), 1)
+                end
+                i = i + 1
+            end
+            return g
+        end
+
+        return recursive_impl(f, {})
+    end
 end
 
 -- Return exports
@@ -228,6 +291,6 @@ return {
     test_eq = test_eq,
     test_eq_v = test_eq_v,
     clone_function = clone_function,
-    mock_function = mock_function
+    mock_function_env = mock_function_env,
+    mock_function_upvalues = mock_function_upvalues
 }
-
