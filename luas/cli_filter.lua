@@ -72,12 +72,15 @@ local function slurm_errorf(fmt, ...)
     return slurm.ERROR
 end
 
+-- Upping log verbosity in e.g. salloc for some reason does not apply
+-- to cli_filter logging. For now, use log_info and spam debug info to user.
+
 local function slurm_debug(msg)
-    slurm.log_debug("cli_filter: %s", msg)
+    slurm.log_info("cli_filter: %s", msg)
 end
 
 local function slurm_debugf(fmt, ...)
-    slurm.log_debug("cli_filter: "..fmt, ...)
+    slurm.log_info("cli_filter: "..fmt, ...)
 end
 
 -- Execute command; return captured stdout and return code.
@@ -184,7 +187,7 @@ function slurm_cli_pre_submit(options, offset)
 
     -- have any cpu resource options been passed?
     local has_explicit_cpu_request =
-        tonumber(options['cpus-per-task']) > 1 or tonumber(options['cpus-per-gpu)']) > 0 or
+        tonumber(options['cpus-per-task']) > 1 or tonumber(options['cpus-per-gpu']) > 0 or
         not is_unset(options['cores-per-socket'])
 
     -- have any gpu resrouce options been passed?

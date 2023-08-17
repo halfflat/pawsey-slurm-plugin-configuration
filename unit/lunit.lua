@@ -165,7 +165,7 @@ end
 -- Mocking utilities
 
 local function clone_function(fn)
-    local new_fn = loadstring(string.dump(fn))
+    local new_fn = load(string.dump(fn))
     local i = 1
     while debug.getupvalue(fn, i) do
         debug.upvaluejoin(new_fn, i, fn, i)
