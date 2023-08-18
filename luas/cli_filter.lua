@@ -240,7 +240,8 @@ function slurm_cli_pre_submit(options, offset)
 
         local tres = pinfo.TRES
         if not tres or not tres.cpu or not tres['gres/gpu'] then return slurm_error('unable to determine cpu to gpu ratio') end
-        local cpus_per_gpu = math.floor(tres.cpu/tres['gres/gpu'])
+        local cpus_per_gpu = tonumber(tres.cpu)/tonumber(tres['gres/gpu'])
+        if tonumber(options['threads-per-core']) == 1 then cpus_per_gpu = cpus_per_gpu/2 end
 
         if has_explicit_cpu_request then
             return slurm_errorf('cannot explicitly request CPU resources for GPU allocation; each allocated GPU allocates %d cores', cpus_per_gpu)
@@ -257,7 +258,7 @@ function slurm_cli_pre_submit(options, offset)
             return slurm_error('non-exclusive GPU allocations require a request for one or more GPUs')
         end
 
-        options['cpus-per-gpu'] = cpus_per_gpu
+        options['cpus-per-gpu'] = math.floor(cpus_per_gpu)
         if is_node_exclusive then
             options['gres'] = 'gpu:8'
         end
