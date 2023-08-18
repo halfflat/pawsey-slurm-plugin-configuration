@@ -144,6 +144,27 @@ local function get_partition_info(partition)
     return nil
 end
 
+-- all (?)  slurm option keys
+
+local slurm_option_keys = {
+    "accel-bind", "account", "acctg-freq", "array", "argv", "batch", "bbf", "autocomplete", "bcast", "bcast-exclude",
+    "begin", "bell", "bb", "cluster-constraint", "chdir", "clusters", "cluster", "comment", "compress", "constraint",
+    "container", "container-id", "context", "contiguous", "core-spec", "cores-per-socket", "cpu-bind", "cpu_bind", "cpu-freq", "cpus-per-gpu",
+    "cpus-per-task", "deadline", "debugger-test", "delay-boot", "environment", "dependency", "disable-status", "distribution", "epilog", "error",
+    "exclude", "exclusive", "exact", "export", "external-launcher", "extra", "extra-node-info", "get-user-env", "gid", "gpu-bind",
+    "gpu-freq", "gpus", "gpus-per-node", "gpus-per-socket", "gpus-per-task", "tres-per-task", "gres", "gres-flags", "help", "hint",
+    "hold", "ignore-pbs", "immediate", "input", "interactive", "jobid", "job-name", "kill-command", "kill-on-bad-exit", "kill-on-invalid-dep",
+    "label", "licenses", "mail-type", "mail-user", "threads", "mcs-label", "mem", "mem-bind", "mem-per-cpu", "mem-per-gpu",
+    "mincpus", "mpi", "msg-timeout", "multi-prog", "network", "nice", "no-allocate", "no-bell", "no-kill", "no-requeue",
+    "no-shell", "nodefile", "nodelist", "nodes", "ntasks", "ntasks-per-core", "ntasks-per-node", "ntasks-per-socket", "ntasks-per-tres", "ntasks-per-gpu",
+    "open-mode", "output", "overcommit", "overlap", "oversubscribe", "pack-group", "het-group", "parsable", "partition", "power",
+    "prefer", "preserve-env", "priority", "profile", "prolog", "propagate", "pty", "qos", "quiet", "quit-on-interrupt",
+    "reboot", "relative", "requeue", "reservation", "resv-ports", "send-libs", "signal", "slurmd-debug", "sockets-per-node", "spread-job",
+    "switches", "task-epilog", "task-prolog", "tasks-per-node", "test-only", "thread-spec", "threads-per-core", "time", "time-min", "tmp",
+    "uid", "unbuffered", "use-min-nodes", "usage", "verbose", "version", "wait", "wait", "wait-all-nodes", "wckey",
+    "whole", "wrap", "x11"
+}
+
 -- Slurm CLI filter interface functions:
 
 function slurm_cli_setup_defaults(options, early)
@@ -177,6 +198,11 @@ function slurm_cli_pre_submit(options, offset)
 
     slurm_debugf("before doing any changes options are mem=%s, mem-per-cpu=%s, partition=%s, exclusive=%s",
         options['mem'], options['mem-per-cpu'], options['partition'], options['exclusive'])
+
+    slurm_debugf('type(options["argv"])=%s; count=%d',type(options['argv']), #options['argv'])
+    for i, v in ipairs(options.argv) do
+        slurm_debugf('argv[%d] = %s', i, v)
+    end
 
     local function is_gpu_partition(partition)
         return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
