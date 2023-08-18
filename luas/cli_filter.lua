@@ -73,14 +73,20 @@ local function slurm_errorf(fmt, ...)
 end
 
 -- Upping log verbosity in e.g. salloc for some reason does not apply
--- to cli_filter logging. For now, use log_info and spam debug info to user.
+-- to cli_filter logging. For now, use log_info and rely upon an
+-- environment variable to enable/disable debug output.
+
+local function debug_lvl()
+    local v = os.getenv('SLURM_CLI_FILTER_DEBUG')
+    return (v and tonumber(v)) or 0
+end
 
 local function slurm_debug(msg)
-    slurm.log_info("cli_filter: %s", msg)
+    if debug_lvl() > 0 then slurm.log_info("cli_filter: %s", msg) end
 end
 
 local function slurm_debugf(fmt, ...)
-    slurm.log_info("cli_filter: "..fmt, ...)
+    if debug_lvl() > 0 then slurm.log_info("cli_filter: "..fmt, ...) end
 end
 
 -- Execute command; return captured stdout and return code.

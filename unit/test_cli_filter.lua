@@ -168,8 +168,11 @@ function T.test_slurm_error()
 end
 
 function T.test_slurm_debug()
-    local slurm_debug = clif_functions.slurm_debug
-    local slurm_debugf = clif_functions.slurm_debugf
+    local enable_debug = true
+    local function mock_debug_lvl() return enable_debug and 1 or 0 end
+
+    local slurm_debug = lunit.mock_function_upvalues(clif_functions.slurm_debug, { debug_lvl = mock_debug_lvl }, true)
+    local slurm_debugf = lunit.mock_function_upvalues(clif_functions.slurm_debugf, { debug_lvl = mock_debug_lvl }, true)
     local eq = lunit.test_eq_v
 
     slurm_log_debug_tbl = {}
@@ -179,6 +182,13 @@ function T.test_slurm_debug()
 
     slurm_debugf('%s=%02d', 'foo', 3)
     assert(eq('cli_filter: foo=03', slurm_log_debug_tbl[2]))
+
+    slurm_log_debug_tbl = {}
+    enable_debug = false
+
+    slurm_debug('not a %s fmt')
+    slurm_debugf('%s=%02d', 'foo', 3)
+    assert(eq(0, #slurm_log_debug_tbl))
 end
 
 if not lunit.run_tests(T) then os.exit(1) end
