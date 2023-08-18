@@ -1,6 +1,23 @@
+--[[
+    Unit tests for code in the Pawsey slurm lua cli_filter.
+
+    The cli_filter provides three global functions as part of
+    the slurm lua cli_filter API. It also uses a number of
+    local functions in the implementation of these API functions.
+
+    These unit tests aim to provide some test coverage of
+    both the API functions and the local implementation functions,
+    though at this point in time only tests for the latter have
+    been implemented.
+]]--
+
 lunit = require('lunit')
 
--- mock slurm interface:
+-- Mock slurm interface:
+--
+-- Slurm itself exports some interfaces to slurm functionality
+-- and key constants to the cli_filter lua program; mock these
+-- for isolated unit testing directly in the global environment.
 
 slurm_log_error_tbl = {}
 slurm_log_debug_tbl = {}
@@ -19,11 +36,11 @@ end
 slurm.SUCCESS = 0
 slurm.ERROR = -1
 
--- schlep in cli_filter; returns table of local functions to test
+-- Schlep in cli_filter; returns table of local functions to test.
 
 clif_functions = dofile("../luas/cli_filter.lua")
 
--- test suite:
+-- Test suite:
 
 T = {}
 function T.test_tokenize()
@@ -84,6 +101,7 @@ local mock_show_partition_output_tbl = {
             TRESBillingWeights=CPU=1,gres/GPU=64"
 }
 
+-- provide a substitute for invoking `scontrol partition info`
 local function mock_run_show_partition(partition)
     local out = ''
     if not partition or partition == '' then
