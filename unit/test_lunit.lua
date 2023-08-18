@@ -1,3 +1,13 @@
+--[[
+    Unit tests for the included unit-test runner 'lunit' itself.
+
+    lunit.lua provides a very simple test suite runner (tests are
+    simple functions in a table that throw an error on failure)
+    together with some functionality for modifying a function
+    for testing through mocking global state or function upvalues.
+]]--
+
+
 lunit = require('lunit')
 
 local T = {}
