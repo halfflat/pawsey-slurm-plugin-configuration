@@ -12,6 +12,10 @@ end
 function slurm.log_debug(fmt, ...)
     table.insert(slurm_log_debug_tbl, string.format(fmt, ...))
 end
+-- For now at least, cli_filter debug output is being sent via slurm.log_info.
+function slurm.log_info(fmt, ...)
+    table.insert(slurm_log_debug_tbl, string.format(fmt, ...))
+end
 slurm.SUCCESS = 0
 slurm.ERROR = -1
 
