@@ -6,13 +6,12 @@
         slurm_cli_post_submit(offset, jobid, stepid)
         slurm_cli_setup_defaults(options, early)
 
-    Debugging output is through the slurm.log_debug lua interface,
-    corresponding to slurm's LOG_LEVEL_DEBUG, which should then be directed to
-    stderr when e.g. salloc is given the option -vv.
-
-    Error messages are emitted through the slurm.log_error lua interface,
-    corresponding to slurm's LOG_LEVEL_ERROR, which writes to stderr by default.
---]]
+    Debugging output is through the slurm logging interface,
+    but because verbosity settings aren't propagated to the cli filter,
+    we can only use slurm.log_error and slurm.log_info lua API functions.
+    Debug output is enabled only if the environment variable
+    SLURM_CLI_FILTER_DEBUG is set to a number greater than zero.
+]]
 
 --[[
    tokenize(str, pattern, max_tokens)
@@ -20,12 +19,12 @@
    Regard str as a string of tokens separated by separators that are described by the pattern string and
    return the tokens as a table. Operates similarly to perl's split function.
 
-  If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
-  If max_tokens is zero, exclude any trailing empty tokens from the result.
-  If max_tokens is a negative number, return all tokens.
-  If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
-  the preceding token would be non-empty.
-]]--
+   If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
+   If max_tokens is zero, exclude any trailing empty tokens from the result.
+   If max_tokens is a negative number, return all tokens.
+   If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
+   the preceding token would be non-empty.
+]]
 
 local function tokenize(str, pattern, max_tokens)
     if #str == 0 then return {} end
@@ -181,8 +180,8 @@ function slurm_cli_pre_submit(options, offset)
         is all the memory on a node.
     --]]
 
-    slurm_debugf("before doing any changes options are mem=%s, mem-per-cpu=%s, partition=%s, exclusive=%s",
-        options['mem'], options['mem-per-cpu'], options['partition'], options['exclusive'])
+    slurm_debugf('options on entry: %s', slurm.json_cli_options(options))
+    slurm_debugf('SLURM_JOB_PARTITION=%s', os.getenv('SLURM_JOB_PARTITION') or '')
 
     local function is_gpu_partition(partition)
         return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
@@ -213,25 +212,22 @@ function slurm_cli_pre_submit(options, offset)
         -- Non-gpu partition path: compute correct mem-per-cpu value from available memory and threads-per-core option
         -- if memory has not been reqested explicitly
 
-        if has_explicit_mem_request then
-            return slurm.SUCCESS
+        if not has_explicit_mem_request then
+            local pinfo = get_partition_info(partition)
+            if pinfo == nil then return slurm_error("unable to retrieve partition information") end
+
+            local mem_per_hw_thread = math.floor(tonumber(pinfo.DefMemPerCPU))
+
+            if is_node_exclusive or has_all_mem_request then
+                local hw_threads_per_node = math.floor(tonumber(pinfo.TotalCPUs)/tonumber(pinfo.TotalNodes))
+                options['mem'] = math.floor(mem_per_hw_thread * hw_threads_per_node)
+            else
+                local mem_scale = 1
+                if tonumber(options['threads-per-core']) == 1 then mem_scale = 2 end
+
+                options['mem-per-cpu'] = mem_per_hw_thread * mem_scale
+            end
         end
-
-        local pinfo = get_partition_info(partition)
-        if pinfo == nil then return slurm_error("unable to retrieve partition information") end
-
-        local mem_per_hw_thread = math.floor(tonumber(pinfo.DefMemPerCPU))
-
-        if is_node_exclusive or has_all_mem_request then
-            local hw_threads_per_node = math.floor(tonumber(pinfo.TotalCPUs)/tonumber(pinfo.TotalNodes))
-            options['mem'] = math.floor(mem_per_hw_thread * hw_threads_per_node)
-        else
-            local mem_scale = 1
-            if tonumber(options['threads-per-core']) == 1 then mem_scale = 2 end
-
-            options['mem-per-cpu'] = mem_per_hw_thread * mem_scale
-        end
-        return slurm.SUCCESS
     else
         -- Gpu partition path
 
@@ -262,8 +258,10 @@ function slurm_cli_pre_submit(options, offset)
         if is_node_exclusive then
             options['gres'] = 'gpu:8'
         end
-        return slurm.SUCCESS
     end
+
+    slurm_debugf('options on exit: %s', slurm.json_cli_options(options))
+    return slurm.SUCCESS
 end
 
 -- return table of local functions for unit testing
