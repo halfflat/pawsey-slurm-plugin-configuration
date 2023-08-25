@@ -114,6 +114,10 @@ local function get_default_partition()
     return nil
 end
 
+local function get_default_partition_or_env()
+    return os.getenv('SLURM_JOB_PARTITION') or get_default_partition()
+end
+
 local function parse_partition_info_str(pinfo_str)
     if not pinfo_str then return nil end
 
@@ -193,7 +197,7 @@ function slurm_cli_pre_submit(options, offset)
 
     -- have any cpu resource options been passed?
     local has_explicit_cpu_request =
-        tonumber(options['cpus-per-task']) > 1 or tonumber(options['cpus-per-gpu']) > 0 or
+        not is_unset(options['cpus-per-task']) or not is_unset(options['cpus-per-gpu']) or
         not is_unset(options['cores-per-socket'])
 
     -- have any gpu resrouce options been passed?
@@ -207,7 +211,7 @@ function slurm_cli_pre_submit(options, offset)
         options['mem-per-cpu'] ~= nil or options['mem-per-gpu'] ~= nil or options['mem'] ~=nil and not has_all_mem_request
 
     local is_node_exclusive = options['exclusive'] == 'exclusive' -- disregard 'user', 'mcs' possibilities.
-    local partition = options['partition'] or get_default_partition()
+    local partition = options['partition'] or get_default_partition_or_env()
 
     if not is_gpu_partition(partition) then
         -- Non-gpu partition path: compute correct mem-per-cpu value from available memory and threads-per-core option
@@ -273,7 +277,7 @@ return {
     slurm_errorf = slurm_errorf,
     slurm_debug = slurm_debug,
     slurm_debugf = slurm_debugf,
-    get_default_partition = get_default_partition,
+    get_default_partition_or_env = get_default_partition_or_env,
     parse_partition_info_str = parse_partition_info_str,
     get_partition_info = get_partition_info,
 }

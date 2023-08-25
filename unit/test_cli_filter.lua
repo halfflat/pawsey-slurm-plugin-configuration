@@ -33,8 +33,43 @@ end
 function slurm.log_info(fmt, ...)
     table.insert(slurm_log_debug_tbl, string.format(fmt, ...))
 end
+-- If we use slurm.json_cli_options(options) in the filter, we'll need something
+-- here too.
+function slurm.json_cli_options(opts)
+    return '{}'
+end
 slurm.SUCCESS = 0
 slurm.ERROR = -1
+
+-- Mock os.getenv with mock os table as required
+
+mock_unset_tbl = {}
+mock_setenv_tbl = {}
+
+mock_os = {}
+setmetatable(mock_os, { __index = os })
+function mock_os.getenv(v)
+    if mock_unset_tbl[v] then return nil
+    elseif mock_setenv_tbl[v] ~= nil then return mock_setenv_tbl[v]
+    else return os.getenv(v)
+    end
+end
+
+function mock_setenv(v, x)
+    mock_unset_tbl[v] = nil
+    mock_setenv_tbl[v] = x
+end
+
+function mock_unset(v, x)
+    mock_unset_tbl[v] = true
+    mock_setenv_tbl[v] = nil
+end
+
+function mock_clearenv()
+    mock_unset_tbl = {}
+    mock_setenv_tbl = {}
+end
+
 
 -- Schlep in cli_filter; returns table of local functions to test.
 
@@ -117,17 +152,24 @@ local function mock_run_show_partition(partition)
     end
 end
 
-function T.test_get_default_partition()
-    local get_default_partition = lunit.mock_function_upvalues(clif_functions.get_default_partition, { run_show_partition = mock_run_show_partition }, true)
+function T.test_get_default_partition_or_env()
+    local tmp = lunit.mock_function_upvalues(clif_functions.get_default_partition_or_env, { run_show_partition = mock_run_show_partition }, true)
+    local get_default_partition_or_env = lunit.mock_function_env(tmp, { os = mock_os }, true)
     local eq = lunit.test_eq_v
 
-    assert(eq('work', get_default_partition()))
+    mock_unset('SLURM_JOB_PARTITION')
+    assert(eq('work', get_default_partition_or_env()))
+
+    mock_setenv('SLURM_JOB_PARTITION', 'caterpillar')
+    assert(eq('caterpillar', get_default_partition_or_env()))
+
+    mock_unset('SLURM_JOB_PARTITION')
 
     -- temporarily munge mock partition info to remove Default
     local saved = mock_show_partition_output_tbl.work;
     mock_show_partition_output_tbl.work = string.gsub(saved, 'Default=[^%s]*', '')
 
-    local result = get_default_partition()
+    local result = get_default_partition_or_env()
     mock_show_partition_output_tbl.work = saved
 
     assert(eq(nil, result))
@@ -189,6 +231,91 @@ function T.test_slurm_debug()
     slurm_debug('not a %s fmt')
     slurm_debugf('%s=%02d', 'foo', 3)
     assert(eq(0, #slurm_log_debug_tbl))
+end
+
+function T.test_cli_sets_memory()
+    -- matches or is derived from mock partition info above
+    local def_mem_per_cpu = 920
+    local n_threads_per_node = 256
+
+    local eq = lunit.test_eq_v
+
+    -- expect only mem-per-cpu to be set out of the memory options
+    options = { partition = 'work', ['threads-per-core'] = 1 }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem']))
+    assert(eq(def_mem_per_cpu*2, tonumber(options['mem-per-cpu'])))
+
+    options = { partition = 'work', ['threads-per-core'] = 2 }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem']))
+    assert(eq(def_mem_per_cpu, tonumber(options['mem-per-cpu'])))
+
+    -- expect only mem to be set
+    options = { partition = 'work', ['threads-per-core'] = 1, exclusive = 'exclusive' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(def_mem_per_cpu*n_threads_per_node, options['mem']))
+
+    options = { partition = 'work', ['threads-per-core'] = 1, mem = '0?' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(def_mem_per_cpu*n_threads_per_node, options['mem']))
+
+    options = { partition = 'work', ['threads-per-core'] = 2, exclusive = 'exclusive' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(def_mem_per_cpu*n_threads_per_node, options['mem']))
+
+    options = { partition = 'work', ['threads-per-core'] = 2, mem = '0?' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(def_mem_per_cpu*n_threads_per_node, options['mem']))
+
+    -- expect no other memory options to be set
+    options = { partition = 'work', mem = '500M' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq('500M', options['mem']))
+
+    options = { partition = 'work', ['threads-per-core'] = 1, ['mem-per-cpu'] = '500M' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq('500M', options['mem-per-cpu']))
+    assert(eq(nil, options['mem']))
+
+    -- if partition is gpu, also expect no memory mangling
+    options = { partition = 'gpu', gpus = '1'}
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(nil, options['mem']))
+
+    options = { partition = 'gpu', exclusive = 'exclusive' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+    assert(eq(nil, options['mem-per-gpu']))
+    assert(eq(nil, options['mem-per-cpu']))
+    assert(eq(nil, options['mem']))
+
+    -- if partition is gpu, expect an error if memory request
+    options = { partition = 'gpu', gpus = '1', mem = '500M'}
+    assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
+
+    options = { partition = 'gpu', gpus = '1', ['mem-per-gpu'] = '500M'}
+    assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
+
+    options = { partition = 'gpu', gpus = '1', ['mem-per-cpu'] = '500M'}
+    assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
+
+    options = { partition = 'gpu', exclusive = 'exclusive', mem = '500M'}
+    assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
 end
 
 if not lunit.run_tests(T) then os.exit(1) end
