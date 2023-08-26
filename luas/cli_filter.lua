@@ -191,6 +191,9 @@ function slurm_cli_pre_submit(options, offset)
     -- An unset option can be repesented by nil, the string "-2", or the string "unset": check all of them.
     local function is_unset(x) return x == nil or x == '-2' or x == 'unset' end
 
+    -- Are we in srun that's being invoked inside an allocation?
+    local is_srun_in_allocation = options['type'] == 'srun' and os.getenv('SLURM_JOB_PARTITION') ~= nil
+
     -- have any cpu resource options been passed?
     local has_explicit_cpu_request =
         tonumber(options['cpus-per-task']) > 1 or tonumber(options['cpus-per-gpu']) > 0 or
@@ -243,7 +246,7 @@ function slurm_cli_pre_submit(options, offset)
         local cpus_per_gpu = tonumber(tres.cpu)/tonumber(tres['gres/gpu'])
         if tonumber(options['threads-per-core']) == 1 then cpus_per_gpu = cpus_per_gpu/2 end
 
-        if has_explicit_cpu_request then
+        if has_explicit_cpu_request and not is_srun_in_allocation then
             return slurm_errorf('cannot explicitly request CPU resources for GPU allocation; each allocated GPU allocates %d cores', cpus_per_gpu)
         end
 
