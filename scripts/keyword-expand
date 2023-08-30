@@ -1,0 +1,18 @@
+#!/usr/bin/env perl
+
+$gitlog = qx(git log -1 --pretty=format:'%cI %H' 2>/dev/null) or 'unknown commit';
+chomp($gitlog);
+
+system('git diff --quiet HEAD 2>/dev/null');
+$modified = $?? ' (modified)': '';
+
+($date, $rev) = $gitlog =~ /(\S+)\s+(\S+)/;
+$rev .= $modified;
+
+while (<>) {
+    s/\$Revision\$/\$Revision: $rev\$/g;
+    s/\$Date\$/\$Date: $date\$/g;
+    print;
+}
+
+
