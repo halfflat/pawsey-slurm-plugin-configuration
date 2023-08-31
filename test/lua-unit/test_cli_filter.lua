@@ -328,7 +328,7 @@ function T.test_cli_srun_requires_gpu()
     -- request option because `--gres=gpu:N` is not propagated to srun and we
     -- wish to permit a simple remote interactive shell case without requiring
     -- an explicit srun. Otherwise, without an existing allocation, we demand
-    -- the srun requests gpu resoruces.
+    -- the srun requests gpu resources.
 
     mock_unset('SLURM_JOB_PARTITION')
     options = { type = 'srun', partition = 'gpu', gpus = '2' }
