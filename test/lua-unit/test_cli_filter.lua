@@ -73,7 +73,7 @@ end
 
 -- Schlep in cli_filter; returns table of local functions to test.
 
-clif_functions = dofile("../luas/cli_filter.lua")
+clif_functions = dofile("../../stage/cli_filter.lua")
 
 -- Test suite:
 
@@ -238,6 +238,7 @@ function T.test_cli_sets_memory()
     local def_mem_per_cpu = 920
     local n_threads_per_node = 256
 
+    local slurm_cli_pre_submit = lunit.mock_function_upvalues(slurm_cli_pre_submit, { run_show_partition = mock_run_show_partition }, true)
     local eq = lunit.test_eq_v
 
     -- expect only mem-per-cpu to be set out of the memory options

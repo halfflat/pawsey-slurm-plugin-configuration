@@ -14,17 +14,23 @@
 ]]
 
 --[[
-   tokenize(str, pattern, max_tokens)
+    tokenize(str, pattern, max_tokens)
 
-   Regard str as a string of tokens separated by separators that are described by the pattern string and
-   return the tokens as a table. Operates similarly to perl's split function.
+    Regard str as a string of tokens separated by separators that are described
+    by the pattern string and return the tokens as a table. Operates similarly
+    to perl's split function.
 
-   If max_tokens is a positive number, only the first (max_tokens - 1) separators will be considered.
-   If max_tokens is zero, exclude any trailing empty tokens from the result.
-   If max_tokens is a negative number, return all tokens.
-   If the pattern matches a zero-length subsring, it will only be considered to describe a separator if
-   the preceding token would be non-empty.
+    - If max_tokens is a positive number, only the first (max_tokens - 1)
+      separators will be considered.
+    - If max_tokens is zero, exclude any trailing empty tokens from the result.
+    - If max_tokens is a negative number, return all tokens.
+    - If the pattern matches a zero-length subsring, it will only be considered
+      to describe a separator if the preceding token would be non-empty.
 ]]
+
+-- $Date$, $Revision$ substituted by keyword script in staging.
+local git_date = '$Date$'
+local git_revision = '$Revision$'
 
 local function tokenize(str, pattern, max_tokens)
     if #str == 0 then return {} end
@@ -184,6 +190,8 @@ function slurm_cli_pre_submit(options, offset)
         is all the memory on a node.
     --]]
 
+    slurm_debugf('revision %s', git_revision:gsub('[$]Revision: ([^$]*)[$]', '%1'))
+    slurm_debugf('date %s', git_date:gsub('[$]Date: ([^$]*)[$]', '%1'))
     slurm_debugf('options on entry: %s', slurm.json_cli_options(options))
     slurm_debugf('SLURM_JOB_PARTITION=%s', os.getenv('SLURM_JOB_PARTITION') or '')
 

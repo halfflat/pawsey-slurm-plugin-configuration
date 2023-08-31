@@ -1,0 +1,3 @@
+# ignore everything in stage/ except .gitignore itself.
+*
+!.gitignore
