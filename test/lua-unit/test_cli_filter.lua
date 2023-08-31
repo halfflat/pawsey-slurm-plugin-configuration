@@ -319,4 +319,50 @@ function T.test_cli_sets_memory()
     assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
 end
 
+function T.test_cli_srun_requires_gpu()
+    local tmp = lunit.mock_function_upvalues(slurm_cli_pre_submit, { run_show_partition = mock_run_show_partition }, true)
+    local slurm_cli_pre_submit = lunit.mock_function_env(tmp, { os = mock_os }, true)
+    local eq = lunit.test_eq_v
+
+    -- For srun outside an allocation, we allow there not to be an explicit gpu
+    -- request option because `--gres=gpu:N` is not propagated to srun and we
+    -- wish to permit a simple remote interactive shell case without requiring
+    -- an explicit srun. Otherwise, without an existing allocation, we demand
+    -- the srun requests gpu resources.
+
+    mock_unset('SLURM_JOB_PARTITION')
+    options = { type = 'srun', partition = 'gpu', gpus = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', partition = 'gpu', gres = 'gpu:2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', partition = 'gpu', ['gpus-per-node'] = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', partition = 'gpu', ['gpus-per-task'] = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', partition = 'gpu' }
+    assert(eq(slurm.ERROR, slurm_cli_pre_submit(options, 0)))
+
+    mock_setenv('SLURM_JOB_PARTITION', 'gpu')
+    options = { type = 'srun', gpus = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', gres = 'gpu:2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', ['gpus-per-node'] = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun', ['gpus-per-task'] = '2' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    options = { type = 'srun' }
+    assert(eq(slurm.SUCCESS, slurm_cli_pre_submit(options, 0)))
+
+    mock_unset('SLURM_JOB_PARTITION')
+end
+
 if not lunit.run_tests(T) then os.exit(1) end
