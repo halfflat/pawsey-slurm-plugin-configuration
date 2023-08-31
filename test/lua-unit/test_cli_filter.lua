@@ -324,7 +324,7 @@ function T.test_cli_srun_requires_gpu()
     local slurm_cli_pre_submit = lunit.mock_function_env(tmp, { os = mock_os }, true)
     local eq = lunit.test_eq_v
 
-    -- for srun outside an allocation, we allow there not to be an explicit gpu
+    -- For srun outside an allocation, we allow there not to be an explicit gpu
     -- request option because `--gres=gpu:N` is not propagated to srun and we
     -- wish to permit a simple remote interactive shell case without requiring
     -- an explicit srun. Otherwise, without an existing allocation, we demand
