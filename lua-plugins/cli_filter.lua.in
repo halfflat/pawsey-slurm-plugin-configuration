@@ -199,8 +199,10 @@ function slurm_cli_pre_submit(options, offset)
         return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
     end
 
-    -- An unset option can be repesented by nil, the string "-2", or the string "unset": check all of them.
-    local function is_unset(x) return x == nil or x == '-2' or x == 'unset' end
+    -- An unset option can be repesented by nil, the string "-2", the string "0", or the string "unset": check all of them.
+    -- (Use explicit checks if any of the above is in fact an expected possible value. Note that options exposed by
+    -- the slurm cli_filter lua API differ between the json reporting and between the C-backed lua 'options' table.)
+    local function is_unset(x)  return x == nil or x == '-2' or x == 'unset' or x == '0' end
 
     -- Are we in srun that's being invoked inside an allocation?
     local is_srun_in_allocation = options['type'] == 'srun' and os.getenv('SLURM_JOB_PARTITION') ~= nil
