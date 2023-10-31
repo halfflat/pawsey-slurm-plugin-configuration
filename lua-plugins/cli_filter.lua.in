@@ -106,7 +106,7 @@ end
 -- Run scontrol show partition; this function will be mocked in unit testing.
 
 local function run_show_partition(partition)
-    return os_execute('scontrol show partition --oneliner '..(partition or '')..' 2>/dev/null')
+    return os_execute('scontrol show partition --all --oneliner '..(partition or '')..' 2>/dev/null')
 end
 
 local function get_default_partition()
