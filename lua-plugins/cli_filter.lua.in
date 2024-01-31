@@ -199,6 +199,10 @@ function slurm_cli_pre_submit(options, offset)
         return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
     end
 
+    local function is_acceptance_partition(partition)
+        return partition == 'acceptance'
+    end
+
     -- An unset option can be repesented by nil, the string "-2", the string "0", or the string "unset": check all of them.
     -- (Use explicit checks if any of the above is in fact an expected possible value. Note that options exposed by
     -- the slurm cli_filter lua API differ between the json reporting and between the C-backed lua 'options' table.)
@@ -225,7 +229,7 @@ function slurm_cli_pre_submit(options, offset)
     local is_node_exclusive = options['exclusive'] == 'exclusive' -- disregard 'user', 'mcs' possibilities.
     local partition = options['partition'] or get_default_partition_or_env()
 
-    if not is_gpu_partition(partition) then
+    if not is_gpu_partition(partition) and not is_acceptance_partition(partition) then
         -- Non-gpu partition path: compute correct mem-per-cpu value from available memory and threads-per-core option
         -- if memory has not been reqested explicitly
 
