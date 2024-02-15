@@ -249,7 +249,7 @@ function slurm_cli_pre_submit(options, offset)
                 options['mem-per-cpu'] = mem_per_hw_thread * mem_scale
             end
         end
-    else
+    elseif is_gpu_partition(partition) then
         -- Gpu partition path
 
         local pinfo = get_partition_info(partition)
