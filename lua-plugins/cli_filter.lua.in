@@ -196,7 +196,7 @@ function slurm_cli_pre_submit(options, offset)
     slurm_debugf('SLURM_JOB_PARTITION=%s', os.getenv('SLURM_JOB_PARTITION') or '')
 
     local function is_gpu_partition(partition)
-        return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem'
+        return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem' or partition == 'mwa-gpu'
     end
 
     local function is_acceptance_partition(partition)
