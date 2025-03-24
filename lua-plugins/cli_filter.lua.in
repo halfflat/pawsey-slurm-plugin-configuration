@@ -199,8 +199,8 @@ function slurm_cli_pre_submit(options, offset)
         return partition == 'gpu' or partition == 'gpu-dev' or partition == 'gpu-highmem' or partition == 'mwa-gpu'
     end
 
-    local function is_acceptance_partition(partition)
-        return partition == 'acceptance'
+    local function is_excepted_partition(partition)
+        return partition == 'acceptance' or partition == 'quantum'
     end
 
     -- An unset option can be repesented by nil, the string "-2", the string "0", or the string "unset": check all of them.
@@ -229,7 +229,7 @@ function slurm_cli_pre_submit(options, offset)
     local is_node_exclusive = options['exclusive'] == 'exclusive' -- disregard 'user', 'mcs' possibilities.
     local partition = options['partition'] or get_default_partition_or_env()
 
-    if not is_gpu_partition(partition) and not is_acceptance_partition(partition) then
+    if not is_gpu_partition(partition) and not is_excepted_partition(partition) then
         -- Non-gpu partition path: compute correct mem-per-cpu value from available memory and threads-per-core option
         -- if memory has not been reqested explicitly
 
@@ -267,7 +267,11 @@ function slurm_cli_pre_submit(options, offset)
         -- Try to get mem-per-gpu from JobDefaults? Only used for informational purposes.
         local def_mem_per_gpu = pinfo.JobDefaults and pinfo.JobDefaults.DefMemPerGPU
         if has_explicit_mem_request then
-            return slurm_errorf('cannot explicitly request memory for GPU allocation; each allocated GPU allocates %s MB of memory', def_mem_per_gpu or "some")
+            return slurm_errorf('\nYou cannot explicitly request memory for GPU allocations\nYou asked for (per-cpu %s, per-gpu %s, mem %s)\nEach allocated GPU allocates %s MB of memory by the system',
+            options['mem-per-cpu'],
+            options['mem-per-gpu'],
+            options['mem'],
+            def_mem_per_gpu or "some")
         end
 
         -- Ensure there is some gpu request on a gpu partition
